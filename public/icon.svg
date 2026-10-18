@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- the app tile (radius-sign, 20%): the sign ◉ in the accent on the ground -->
+  <rect width="128" height="128" rx="26" fill="#0b0a09"/>
+  <circle cx="64" cy="64" r="34" fill="none" stroke="#40ffc4" stroke-width="5"/>
+  <circle cx="64" cy="64" r="13" fill="#40ffc4"/>
+</svg>

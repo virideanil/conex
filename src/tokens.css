@@ -1,0 +1,55 @@
+/* d/ay tokens, as conex uses them (tokens.json of the d/ay design system):
+   one ink on one ground, one accent; φ spacing; square radii; motion as cuts. */
+:root {
+  --ground: #0b0a09;
+  --ground-glow: #17140f;
+  --ink: #ede6d8;
+  --ink-dim: #8c8579;
+  --row: #817c75;
+  --frame: rgba(140, 133, 121, 0.45);
+  --edge: #8c8579;
+  --glyph: #c9d4dc;
+  --sepia: #b08d5e;
+  --spiral: #e8be6e;
+  --accent: #40ffc4;
+  --on-accent: #0b0a09;
+  --split-r: #ff003c;
+  --split-b: #006eff;
+  --split-g: #00ff00;
+  --dead: #ffa3a3;
+
+  --font-serif: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
+  --font-mono: "IBM Plex Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+  --space-1: 5px; --space-2: 8px; --space-3: 13px; --space-4: 21px; --space-5: 34px; --space-6: 55px; --space-7: 89px;
+  --gutter: 16px;
+  --horizon: 61.8%;
+  --radius-0: 0; --radius-hair: 2px; --radius-sign: 20%; --radius-dot: 50%;
+
+  --m-tick: 60ms; --m-snap: 120ms; --m-scramble: 260ms; --m-decode: 400ms; --m-shift: 650ms;
+  --m-step: steps(3, jump-end);
+  --m-spring: cubic-bezier(0.2, 1.5, 0.35, 1);
+
+  --z-page: 5; --z-say: 7; --z-panel: 8;
+  --day-track: 0.12em;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --ground: #ebe6dc;
+  --ground-glow: #f4f0e8;
+  --ink: #2b2722;
+  --ink-dim: #5c564c;
+  --row: #5c564c;
+  --frame: #b3ac9f;
+  --edge: #5c564c;
+  --glyph: #242f37;
+  --sepia: #8d6a3b;
+  --spiral: #653b00;
+  --accent: #276a56;
+  --on-accent: #ebe6dc;
+  --dead: #b32424;
+  color-scheme: light;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --m-tick: 0ms; --m-snap: 0ms; --m-scramble: 0ms; --m-decode: 0ms; --m-shift: 0ms; }
+}

@@ -1,0 +1,98 @@
+/* conex, in d/ay's form: a glyph radar above the horizon, the reading below it,
+   doors in the corners. Roles from d/ay: name (the reading), tagline (the
+   unit), door (the way, the corners), label (the hint). Nothing fades. */
+@import "./tokens.css";
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+:root { font-synthesis: none; }
+html { background: var(--ground); height: 100%; }
+body {
+  min-height: 100dvh;
+  overflow: hidden;
+  background: radial-gradient(ellipse 60% 45% at 50% 38.2%, var(--ground-glow) 0%, transparent 70%), var(--ground);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern", "liga";
+  touch-action: manipulation;
+}
+
+/* the radar: the world's material, drawn once per change */
+.field { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* the reading stands under the horizon; the radar's centre is at 1 − 1/φ */
+.home {
+  position: fixed; left: 0; right: 0; top: var(--horizon); z-index: var(--z-say);
+  display: grid; justify-items: center; align-content: start; gap: var(--space-3);
+  padding: 0 var(--gutter); pointer-events: none; text-align: center;
+}
+.reading {
+  font: 500 clamp(5rem, 22vw, 10.5rem)/0.8 var(--font-serif);
+  letter-spacing: -0.035em;
+  font-variant-numeric: lining-nums tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+  user-select: none;
+  margin-top: 0.06em;
+}
+.reading.is-live { color: var(--accent); }
+.reading.is-dead { color: var(--dead); }
+.unit {
+  font: 400 clamp(0.7rem, 0.66rem + 0.2vw, 0.8rem)/1.4 var(--font-mono);
+  letter-spacing: 0.32em; padding-left: 0.32em; text-transform: lowercase;
+  color: var(--ink-dim); white-space: pre;
+}
+.unit b { font-weight: inherit; color: var(--accent); }
+.way {
+  min-height: 1.4em;
+  font: 500 clamp(0.95rem, 0.86rem + 0.5vw, 1.25rem)/1.4 var(--font-mono);
+  letter-spacing: var(--day-track); white-space: pre;
+  color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.way.is-dim { color: var(--ink-dim); font-weight: 400; }
+.more {
+  min-height: 1.4em;
+  font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.14em; text-transform: lowercase;
+  color: var(--ink-dim); white-space: pre; font-variant-numeric: tabular-nums;
+}
+
+/* the cut: for a frame or two the channels part, then it stands whole */
+.is-cut { filter: drop-shadow(-3px 0 var(--split-r)) drop-shadow(3px 0 var(--split-b)); translate: 2px 0; }
+
+/* doors: a word in each corner, in the mono, tracked by the world */
+.door {
+  position: fixed; z-index: var(--z-page);
+  font: 400 clamp(0.78rem, 0.74rem + 0.2vw, 0.9rem)/1.4 var(--font-mono);
+  letter-spacing: var(--day-track); color: var(--ink); text-decoration: none; text-transform: lowercase;
+  padding: 6px 8px; white-space: pre; display: inline-flex; align-items: center;
+  background: none; border: 0; cursor: pointer;
+}
+.door:hover, .door:focus-visible { color: var(--ink); }
+.door:focus-visible { outline: 1px dashed var(--edge); outline-offset: 4px; }
+.door.is-called { color: var(--accent); }
+.door.is-off { color: var(--ink-dim); cursor: default; }
+.door__b { font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-transform: inherit; }
+.door__b:focus-visible { outline: 1px dashed var(--edge); outline-offset: 4px; }
+.door__dot { color: var(--ink-dim); }
+.door--tl { top: clamp(16px, 4vh, 44px); left: clamp(16px, 4vw, 56px); }
+.door--tr { top: clamp(16px, 4vh, 44px); right: clamp(16px, 4vw, 56px); }
+.door--bl { bottom: clamp(16px, 4vh, 44px); left: clamp(16px, 4vw, 56px); }
+.door--br { bottom: clamp(16px, 4vh, 44px); right: clamp(16px, 4vw, 56px); color: var(--ink-dim); }
+.online { font-variant-numeric: tabular-nums; }
+.online.is-beat { color: var(--accent); }
+@media (pointer: coarse) { .door { padding: 12px 10px; min-height: 44px; } .door__b { min-height: 44px; display: inline-flex; align-items: center; } }
+
+/* the hint: one line of small print at the foot */
+.hint {
+  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(7vh, 32px); z-index: var(--z-page);
+  min-height: 1.4em; text-align: center;
+  font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.14em; text-transform: lowercase;
+  color: var(--ink-dim); white-space: pre-wrap; pointer-events: none;
+}
+.hint.is-dead { color: var(--dead); }
+@media (max-width: 420px) { .hint { bottom: max(11vh, 64px); } }
+
+/* a short screen: the reading smaller so the way and the doors keep their place */
+@media (max-height: 560px) { .reading { font-size: clamp(3.5rem, 14vh, 7rem); } .home { gap: var(--space-2); } }
+@media (prefers-reduced-motion: reduce) { .is-cut { filter: none; translate: none; } }
