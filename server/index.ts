@@ -14,6 +14,17 @@ const MAX_DOWNLOAD = 256 * 1024 * 1024; // per request
 const MAX_UPLOAD = 256 * 1024 * 1024;
 const DIST = path.join(import.meta.dirname, "..", "dist");
 
+// What one address may do: enough for people, not for a flood. Counted per hour, forgotten after.
+const LIMITS = { results: 60, downloadBytes: 40 * 1024 ** 3, uploadBytes: 40 * 1024 ** 3 };
+const buckets = new Map<string, { until: number; results: number; downloadBytes: number; uploadBytes: number }>();
+function bucket(ip: string) {
+  const now = Date.now();
+  let b = buckets.get(ip);
+  if (!b || b.until < now) { b = { until: now + 3600e3, results: 0, downloadBytes: 0, uploadBytes: 0 }; buckets.set(ip, b); }
+  return b;
+}
+setInterval(() => { const now = Date.now(); for (const [k, b] of buckets) if (b.until < now) buckets.delete(k); }, 10 * 60e3).unref();
+
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", true);
@@ -22,6 +33,7 @@ const noStore = (res: Response) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  res.setHeader("Server-Timing", "app;dur=0"); // nothing is computed per request: the stream is precomputed
 };
 
 app.use(express.json({ limit: "64kb" }));
@@ -32,16 +44,43 @@ app.get("/api/info", (_req, res) => {
   res.json({ message: payload.MESSAGE, digest: payload.DIGEST_HEX, blockSize: payload.BLOCK_SIZE, keptMin: store.KEEP_MS / 60000, serverTime: Date.now() });
 });
 
-/** Latency probe: nothing, uncached. */
-app.get("/api/ping", (_req, res) => {
+/** A stream, as a 4K60 player would pull one: frames of the sentence's bytes, paced at `fps`, `mbps` worth a second. */
+app.get("/api/stream", (req, res) => {
+  const mbps = Math.min(200, Math.max(1, Number(req.query.mbps) || 40));
+  const fps = Math.min(120, Math.max(1, Math.round(Number(req.query.fps) || 60)));
+  const seconds = Math.min(10, Math.max(1, Number(req.query.seconds) || 4));
+  const frameBytes = Math.round((mbps * 1e6) / 8 / fps), frames = Math.round(seconds * fps), period = 1000 / fps;
   noStore(res);
-  res.status(204).end();
+  const b = bucket(req.ip ?? "?");
+  if (b.downloadBytes > LIMITS.downloadBytes) { res.status(429).end(); return; }
+  b.downloadBytes += frames * frameBytes;
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Length", String(frames * frameBytes));
+  res.setHeader("X-Conex-Frame", `${frameBytes};${fps}`);
+  let k = 0, closed = false;
+  res.on("close", () => { closed = true; });
+  const t0 = performance.now();
+  const send = () => {
+    if (closed) return;
+    // every frame whose time has come goes now; a slow link falls behind here, and the page measures by how much
+    while (k < frames && performance.now() >= t0 + k * period) {
+      const ok = res.write(payload.bytesAt(k * frameBytes, frameBytes));
+      k += 1;
+      if (!ok) { res.once("drain", send); return; }
+    }
+    if (k >= frames) { res.end(); return; }
+    setTimeout(send, Math.max(1, t0 + k * period - performance.now()));
+  };
+  send();
 });
 
 /** Download: `bytes` of SHAKE256 output of the message. */
 app.get("/api/download", (req, res) => {
   const bytes = Math.min(MAX_DOWNLOAD, Math.max(1, Number(req.query.bytes) || 8 * 1024 * 1024));
   noStore(res);
+  const b = bucket(req.ip ?? "?");
+  if (b.downloadBytes > LIMITS.downloadBytes) { res.status(429).end(); return; }
+  b.downloadBytes += bytes;
   res.setHeader("Content-Type", "application/octet-stream");
   res.setHeader("Content-Length", String(bytes));
   res.setHeader("X-Conex-Digest", payload.DIGEST_HEX);
@@ -61,6 +100,8 @@ app.get("/api/download", (req, res) => {
 /** Upload: count what arrives; check the first block still says the message. */
 app.post("/api/upload", (req, res) => {
   noStore(res);
+  const b = bucket(req.ip ?? "?");
+  if (b.uploadBytes > LIMITS.uploadBytes) { req.destroy(); res.status(429).end(); return; }
   let total = 0, head = Buffer.alloc(0);
   const started = Date.now();
   req.on("data", (chunk: Buffer) => {
@@ -68,12 +109,15 @@ app.post("/api/upload", (req, res) => {
     if (head.length < payload.BLOCK_SIZE) head = Buffer.concat([head, chunk.subarray(0, payload.BLOCK_SIZE - head.length)]);
     if (total > MAX_UPLOAD) req.destroy();
   });
-  req.on("end", () => res.json({ bytes: total, ms: Date.now() - started, verified: payload.verifyFirstBlock(head) }));
+  req.on("end", () => { b.uploadBytes += total; res.json({ bytes: total, ms: Date.now() - started, verified: payload.verifyFirstBlock(head) }); });
   req.on("error", () => { if (!res.headersSent) res.status(400).end(); });
 });
 
 app.post("/api/results", (req, res) => {
   noStore(res);
+  const b = bucket(req.ip ?? "?");
+  if (b.results >= LIMITS.results) { res.status(429).json({ error: "enough for this hour" }); return; }
+  b.results += 1;
   const r = store.add({ ...(req.body as Record<string, unknown>), source: "live" });
   if (!r) { res.status(400).json({ error: "lat, lng and download are required" }); return; }
   broadcast({ type: "result", result: r });
@@ -121,7 +165,9 @@ wss.on("connection", (ws: Live) => {
   ws.send(JSON.stringify({ type: "hello", digest: payload.DIGEST_HEX, online: wss.clients.size, presence: [...presence.values()] } satisfies ServerMsg));
   broadcast({ type: "online", online: wss.clients.size });
 
-  ws.on("message", (raw) => {
+  ws.on("message", (raw, isBinary) => {
+    // a binary frame is the sentence's digest with a clock: it goes straight back, the same bytes
+    if (isBinary) { ws.send(raw, { binary: true }); return; }
     let msg: ClientMsg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
     if (msg.type === "presence") {
@@ -132,8 +178,6 @@ wss.on("connection", (ws: Live) => {
       if (!p.id || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return;
       presence.set(ws, p);
       broadcast({ type: "presence", presence: p }, ws);
-    } else if (msg.type === "ping") {
-      ws.send(JSON.stringify({ type: "pong", t: msg.t, serverTime: Date.now() }));
     }
   });
 

@@ -29,6 +29,19 @@ export function* stream(totalBytes: number): Generator<Buffer> {
   }
 }
 
+/** `n` bytes of the stream starting at `offset`: the same bytes stream() would give there. */
+export function bytesAt(offset: number, n: number): Buffer {
+  const out = Buffer.allocUnsafe(n);
+  let done = 0;
+  while (done < n) {
+    const at = offset + done, b = cache[Math.floor(at / BLOCK_SIZE) % CACHED_BLOCKS], from = at % BLOCK_SIZE;
+    const take = Math.min(n - done, BLOCK_SIZE - from);
+    b.copy(out, done, from, from + take);
+    done += take;
+  }
+  return out;
+}
+
 /** Whether the first block of an uploaded body is block 0: the message came back intact. */
 export function verifyFirstBlock(buf: Buffer): boolean {
   if (buf.length < BLOCK_SIZE) return false;

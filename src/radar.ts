@@ -8,7 +8,7 @@ import { glyph, BINX } from "./binx.ts";
 import { PHI, localKm, distLabel } from "../shared/geo.ts";
 import type { LatLng, Presence, Result, Spot } from "../shared/types.ts";
 
-export type Activity = "none" | "locate" | "latency" | "download" | "upload";
+export type Activity = "none" | "locate" | "latency" | "download" | "upload" | "stream";
 
 export type RadarState = {
   me: (LatLng & { accuracy?: number | null }) | null;
@@ -19,13 +19,36 @@ export type RadarState = {
   others: Presence[];
   radiusKm: number;
   windowMs: number;
+  /** Where the phone points, degrees from north, or null: then north is up. */
+  heading: number | null;
 };
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+type V3 = [number, number, number];
+const norm = (v: V3): V3 => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** Whether (x, y) lies inside the polygon, by ray casting. */
+function inside(poly: [number, number][], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+// The arrow's outline in its own frame: forward is +y, counter-clockwise, in units of its length.
+const ARROW: [number, number][] = [[-0.16, -0.5], [0.16, -0.5], [0.16, 0.06], [0.44, 0.06], [0, 0.5], [-0.44, 0.06], [-0.16, 0.06]];
+const TILT = 0.6; // how far the view leans from straight down: the arrow lies on the ground, seen from above and the south
+const LIGHT = norm([-0.45, 0.35, 0.82]); // from the upper left, above
+const VIEW: V3 = [0, -Math.sin(TILT), Math.cos(TILT)];
+// quadrant blocks by bits: 1 top-left, 2 top-right, 4 bottom-left, 8 bottom-right (binx)
+const QUAD = [" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"];
+
 export function createRadar(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d")!;
-  let st: RadarState = { me: null, testing: false, activity: "none", results: [], spots: [], others: [], radiusKm: 1, windowMs: 3600e3 };
+  let st: RadarState = { me: null, testing: false, activity: "none", results: [], spots: [], others: [], radiusKm: 1, windowMs: 3600e3, heading: null };
   let step = 0; // the activity's clock: one jump every 420 ms
   let W = 0, H = 0, dpr = 1, cw = 6, ch = 10, cols = 0, rows = 0, cx = 0, cy = 0, pxPerKm = 1;
   let lum: Float32Array = new Float32Array(0), lumStale = true;
@@ -46,8 +69,14 @@ export function createRadar(canvas: HTMLCanvasElement) {
     lumStale = true;
   }
 
+  // the world turns so that where the phone points is up
+  const turn = (x: number, y: number) => {
+    if (st.heading === null) return { x, y };
+    const h = (-st.heading * Math.PI) / 180, c = Math.cos(h), s = Math.sin(h);
+    return { x: x * c - y * s, y: x * s + y * c };
+  };
   const toCell = (p: LatLng) => {
-    const k = localKm(st.me!, p);
+    const l = localKm(st.me!, p), k = turn(l.x, l.y);
     return { x: (cx + k.x * pxPerKm) / cw, y: (cy - k.y * pxPerKm) / ch };
   };
 
@@ -125,6 +154,17 @@ export function createRadar(canvas: HTMLCanvasElement) {
       // a ping: a ring leaving the centre, one of five radii each step
       const r = ((step % 5) + 1) * (R / 5.5), n = Math.max(12, Math.round((2 * Math.PI * r) / ch));
       for (let i = 0; i < n; i++) { const a = (i / n) * 2 * Math.PI; put("·", (cx + Math.cos(a) * r) / cw - 0.5, (cy + Math.sin(a) * r) / ch - 0.5, accent); }
+    } else if (st.activity === "stream") {
+      // frames: ▮ falling in on twelve spokes, one cell a step
+      const n = Math.round(R / ch);
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * 2 * Math.PI;
+        for (let j = 0; j < 2; j++) {
+          const i = n - ((step * 2 + k * 2 + j * 7) % n);
+          if (i < 2) continue;
+          put("▮", (cx + Math.cos(a) * i * ch) / cw - 0.5, (cy + Math.sin(a) * i * ch) / ch - 0.5, accent);
+        }
+      }
     } else if (st.activity === "download" || st.activity === "upload") {
       // the bytes: 0 and 1 on sixteen spokes, falling in (download) or leaving (upload), one cell a step
       const inward = st.activity === "download", n = Math.round(R / ch);
@@ -157,8 +197,49 @@ export function createRadar(canvas: HTMLCanvasElement) {
       }
     });
 
-    // you
-    put(st.testing ? (beat ? "◉" : "◎") : "◎", cx / cw - 0.5, cy / ch - 0.5, st.testing ? accent : ink, 500);
+    // you: a 3D arrow of glyphs at your feet, pointing the way, when there is one; else the sign
+    const best = st.spots[0];
+    if (best && !st.testing) arrow3d((best.bearing - (st.heading ?? 0) + 360) % 360, R * 0.72, accent, dim, css("--ground"));
+    else put(st.testing ? (beat ? "◉" : "◎") : "◎", cx / cw - 0.5, cy / ch - 0.5, st.testing ? accent : ink, 500);
+  }
+
+  /** An arrow with volume: a solid top, flat-shaded sides, a shadow; each cell split in four (binx's quadrant material) so slanted edges stay crisp. */
+  function arrow3d(yawDeg: number, L: number, accent: string, dim: string, ground: string) {
+    const yaw = (yawDeg * Math.PI) / 180, T = 0.16 * L;
+    const cy_ = Math.cos(yaw), sy_ = Math.sin(yaw);
+    const w: [number, number][] = ARROW.map(([x, y]) => [(x * cy_ + y * sy_) * L, (-x * sy_ + y * cy_) * L]);
+    const cell = (x: number, y: number, z: number): [number, number] => [(cx + x) / cw, (cy - y * Math.cos(TILT) - z * Math.sin(TILT)) / ch];
+    const sx = -LIGHT[0] * T * 1.6, sy = -LIGHT[1] * T * 1.6;
+    const shadow = w.map(([x, y]) => cell(x + sx, y + sy, 0));
+    const top = w.map(([x, y]) => cell(x, y, T));
+    const sides: { poly: [number, number][]; shade: number }[] = [];
+    for (let i = 0; i < w.length; i++) {
+      const a = w[i], b = w[(i + 1) % w.length], out = norm([b[1] - a[1], -(b[0] - a[0]), 0]);
+      if (dot(out, VIEW) <= 0) continue;
+      sides.push({ poly: [cell(a[0], a[1], 0), cell(b[0], b[1], 0), cell(b[0], b[1], T), cell(a[0], a[1], T)], shade: Math.max(0, dot(out, LIGHT)) });
+    }
+    const all = [...shadow, ...top, ...sides.flatMap((f) => f.poly)];
+    const x0 = Math.max(0, Math.floor(Math.min(...all.map((p) => p[0])))), x1 = Math.min(cols - 1, Math.ceil(Math.max(...all.map((p) => p[0]))));
+    const y0 = Math.max(0, Math.floor(Math.min(...all.map((p) => p[1])))), y1 = Math.min(rows - 1, Math.ceil(Math.max(...all.map((p) => p[1]))));
+    const Q = [0.25, 0.75];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      let tb = 0, sb = 0, hb = 0, shade = 0, n = 0;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+        const px = x + Q[i], py = y + Q[j], bit = 1 << (j * 2 + i);
+        if (inside(top, px, py)) { tb |= bit; continue; }
+        const side = sides.find((f) => inside(f.poly, px, py));
+        if (side) { sb |= bit; shade += side.shade; n += 1; continue; }
+        if (inside(shadow, px, py)) hb |= bit;
+      }
+      if (!(tb | sb | hb)) continue;
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = ground;
+      ctx.fillRect(x * cw, y * ch, cw + 0.5, ch + 0.5);
+      if (hb) { ctx.globalAlpha = 0.9; put(QUAD[hb] === "█" ? "░" : QUAD[hb], x, y, dim, 500); }
+      if (sb) { ctx.globalAlpha = 0.35 + 0.35 * (shade / n); put(QUAD[sb], x, y, accent, 500); }
+      if (tb) { ctx.globalAlpha = 0.95; put(QUAD[tb], x, y, accent, 500); }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // the beat: a step every 420 ms, never a fade
@@ -177,7 +258,7 @@ export function createRadar(canvas: HTMLCanvasElement) {
       const scaleChanged = p.radiusKm !== undefined && p.radiusKm !== st.radiusKm;
       st = { ...st, ...p };
       if (scaleChanged) resize();
-      if (p.me !== undefined || p.results || scaleChanged || p.windowMs) lumStale = true;
+      if (p.me !== undefined || p.results || scaleChanged || p.windowMs || p.heading !== undefined) lumStale = true;
       draw();
     },
     draw,

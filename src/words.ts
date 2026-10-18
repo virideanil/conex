@@ -25,7 +25,7 @@ export const settings = {
 export const lang = (): Lang => s.lang || (navigator.language.toLowerCase().startsWith("tr") ? "tr" : "en");
 export const L = <T>(w: Words<T>): T => w[lang()];
 
-export type Step = "locate" | "latency" | "download" | "upload" | "way";
+export type Step = "locate" | "latency" | "download" | "upload" | "stream" | "way";
 
 export const W = {
   measure: { tr: "ölç", en: "measure" },
@@ -34,9 +34,13 @@ export const W = {
   doors: { tr: "kapılar", en: "doors" },
   radar: { tr: "yakındaki ölçümler, ışık olarak", en: "nearby measurements, as light" },
   step: {
-    tr: { locate: "konum", latency: "gecikme", download: "indirme", upload: "yükleme", way: "yol" } as Record<Step, string>,
-    en: { locate: "location", latency: "latency", download: "download", upload: "upload", way: "way" } as Record<Step, string>,
+    tr: { locate: "konum", latency: "gecikme", download: "indirme", upload: "yükleme", stream: "yayın", way: "yol" } as Record<Step, string>,
+    en: { locate: "location", latency: "latency", download: "download", upload: "upload", stream: "stream", way: "way" } as Record<Step, string>,
   },
+  fit: { tr: { call: "görüşme", game: "oyun", stream: "yayın" }, en: { call: "call", game: "game", stream: "stream" } },
+  loaded: { tr: "yüklü", en: "loaded" },
+  late: { tr: "geç", en: "late" },
+  net: { tr: { wifi: "wifi", cellular: "hücresel", ethernet: "kablo", unknown: "" }, en: { wifi: "wifi", cellular: "cellular", ethernet: "wired", unknown: "" } },
   notKept: { tr: "konum tutulmaz · bir saatlik ışık", en: "location not kept · one hour of light" },
   noLocation: { tr: "konum yok · haritasız", en: "no location · no map" },
   best: { tr: "en iyisi burası", en: "the best is here" },

@@ -3,6 +3,8 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 import { runTest, type Tick, type TestResult } from "./test.ts";
+import { askCompass, awake, tap, netKind, wantsLight } from "./sensors.ts";
+import { fitness } from "../shared/stats.ts";
 import { connect } from "./live.ts";
 import { createRadar, type Activity } from "./radar.ts";
 import { settings, lang, L, W, type Step } from "./words.ts";
@@ -14,10 +16,10 @@ const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const el = {
   field: $<HTMLCanvasElement>(".field"), n: $(".reading__n"), reading: $(".reading"), unit: $(".unit"), way: $(".way"), more: $(".more"),
   measure: $<HTMLButtonElement>(".door--tl"), langBtn: $<HTMLButtonElement>('[data-do="lang"]'), themeBtn: $<HTMLButtonElement>('[data-do="theme"]'),
-  online: $(".online"), hint: $(".hint"), doors: $(".doors"), steps: $(".steps"),
+  online: $(".online"), hint: $(".hint"), doors: $(".doors"), steps: $(".steps"), fit: $(".fit"),
 };
 const stepEl = (k: Step) => el.steps.querySelector<HTMLElement>(`[data-step="${k}"]`)!;
-const STEPS: Step[] = ["locate", "latency", "download", "upload", "way"];
+const STEPS: Step[] = ["locate", "latency", "download", "upload", "stream", "way"];
 
 const CLIENT_ID = (() => {
   try { const k = "conex:client"; let v = localStorage.getItem(k); if (!v) { v = Math.random().toString(36).slice(2, 12); localStorage.setItem(k, v); } return v; }
@@ -30,6 +32,8 @@ const state = {
   watch: 0 as number, // the geolocation watch, once asked
   asked: false, // whether the visitor has been asked for their location
   denied: false,
+  heading: null as number | null,
+  compassAsked: false,
   ctl: null as AbortController | null,
   last: null as TestResult | null,
   results: new Map<string, Result>(),
@@ -41,7 +45,7 @@ const radar = createRadar(el.field);
 // ── signs ────────────────────────────────────────────────────────────────
 const fmt = (v: number) => (v >= 100 ? Math.round(v).toString() : v >= 10 ? v.toFixed(1) : v.toFixed(2));
 const bar = (p: number, n = 8) => { const k = Math.round(p * n); return "▮".repeat(k) + "▯".repeat(n - k); };
-const SIGN: Record<Phase, string> = { idle: "", latency: "·", download: "↓", upload: "↑", done: "" };
+const SIGN: Record<Phase, string> = { idle: "", latency: "·", download: "↓", upload: "↑", stream: "▶", done: "" };
 
 function words() {
   document.documentElement.lang = lang();
@@ -54,6 +58,28 @@ function words() {
   el.field.setAttribute("aria-label", L(W.radar));
   for (const k of STEPS) stepEl(k).dataset.word = W.step[lang()][k];
   renderWay();
+  renderFit();
+}
+const bar5 = (n: number) => "▮".repeat(n) + "▯".repeat(5 - n);
+/** How the line will do, as three bars; empty until measured. */
+function renderFit() {
+  const r = state.last;
+  if (!r) { el.fit.textContent = ""; return; }
+  const f = fitness({ download: r.download, upload: r.upload, latency: r.latency, jitter: r.jitter, loaded: r.loaded, late: r.stream?.late ?? null });
+  const w = W.fit[lang()];
+  el.fit.textContent = `${w.call} ${bar5(f.call)}  ${w.game} ${bar5(f.game)}  ${w.stream} ${bar5(f.stream)}`;
+}
+/** The small print after a test: up, idle→loaded ms, rpm, link, bytes. */
+function renderMore() {
+  const r = state.last;
+  if (!r) return;
+  const parts = [`↑ ${fmt(r.upload)}`, r.loaded !== null ? `${Math.round(r.latency)}→${Math.round(r.loaded)} ms` : `${Math.round(r.latency)} ms`];
+  if (r.rpm !== null && Number.isFinite(r.rpm)) parts.push(`${Math.round(r.rpm)} rpm`);
+  if (r.stream) parts.push(`▶ ${Math.round(r.stream.late * r.stream.frames)} ${L(W.late)}`);
+  const n = W.net[lang()][netKind()];
+  if (n) parts.push(n);
+  parts.push(`⇅ ${r.bytes >= 1e9 ? `${(r.bytes / 1e9).toFixed(1)} gb` : `${Math.round(r.bytes / 1e6)} mb`}${r.verified ? " ✓" : ""}`);
+  decode(el.more, parts.join(" · "));
 }
 
 /** The step line: `on` is the accent, everything before it ink, the rest dim. */
@@ -66,7 +92,7 @@ function showStep(on: Step | null, dead = false) {
     e.classList.toggle("is-dead", j === i && dead);
   });
 }
-const ACT: Record<Step, Activity> = { locate: "locate", latency: "latency", download: "download", upload: "upload", way: "none" };
+const ACT: Record<Step, Activity> = { locate: "locate", latency: "latency", download: "download", upload: "upload", stream: "stream", way: "none" };
 function theme() {
   document.documentElement.dataset.theme = settings.get().theme;
   $('meta[name="theme-color"]').setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--ground").trim());
@@ -174,8 +200,10 @@ function renderWay() {
   if (state.testing) return;
   if (best) {
     el.way.classList.remove("is-dim");
-    decode(el.way, `${arrow(best.bearing)} ${distLabel(best.distanceKm)}${best.gain ? ` · ${best.gain.toFixed(1)}×` : ""}`);
-    decode(el.more, `${fmt(best.download)} mbps · ${L(W.ago)(Math.round(best.ageMs / 60000))}`);
+    const rel = state.heading === null ? best.bearing : (best.bearing - state.heading + 360) % 360;
+    const n = W.net[lang()][best.net];
+    decode(el.way, `${arrow(rel)} ${distLabel(best.distanceKm)}${best.gain ? ` · ${best.gain.toFixed(1)}×` : ""}${n ? ` · ${n}` : ""}`);
+    if (!state.last) decode(el.more, `${fmt(best.download)} mbps · ${L(W.ago)(Math.round(best.ageMs / 60000))}`);
   } else {
     el.way.classList.add("is-dim");
     decode(el.way, !state.me ? "" : state.last ? L(W.best) : L(W.none));
@@ -193,33 +221,42 @@ function tick(t: Tick) {
   if (t.phase === "done") return;
   if (t.phase !== shown) { shown = t.phase; showStep(t.phase as Step); radar.set({ activity: ACT[t.phase as Step] }); }
   el.n.textContent = fmt(t.value);
-  el.unit.innerHTML = `${SIGN[t.phase]} ${t.phase === "latency" ? "ms" : "mbps"}  <b>${bar(t.progress)}</b>`;
+  const lanes = t.phase === "latency" ? "" : t.phase === "stream" ? " 4k60" : ` ×${t.lanes}`;
+  el.unit.innerHTML = `${SIGN[t.phase]} ${t.phase === "latency" ? "ms" : "mbps"}${lanes}  <b>${bar(t.progress)}</b>`;
+  if (t.loaded !== null) el.more.textContent = `· ${Math.round(t.loaded)} ms ${L(W.loaded)}`;
   sendPresence(t.phase, t.value);
 }
 async function toggle() {
   if (state.testing) { state.ctl?.abort(); return; }
   state.testing = true;
   state.ctl = new AbortController();
+  // the compass is asked from the tap itself (iOS allows nothing later); the heading turns the radar
+  if (!state.compassAsked) {
+    state.compassAsked = true;
+    askCompass((deg) => { state.heading = deg; radar.set({ heading: deg }); if (!state.testing) renderWay(); }).catch(() => {});
+  }
   words();
   el.reading.classList.add("is-live");
   cut(el.reading);
-  el.way.textContent = ""; el.more.textContent = "";
+  el.way.textContent = ""; el.more.textContent = ""; el.fit.textContent = "";
   state.spots = [];
   radar.set({ testing: true, spots: [] });
   const located = await askLocation();
   hint(located ? "" : L(W.noLocation), !located);
   shown = "idle";
   try {
-    const r = await runTest(tick, state.ctl.signal);
+    const r = await awake(() => runTest({ ping: () => live.ping(), light: wantsLight(), maxBytes: netKind() === "cellular" ? 150e6 : undefined }, tick, state.ctl!.signal));
     state.last = r;
     el.n.textContent = fmt(r.download);
     cut(el.reading);
+    tap();
     el.unit.textContent = "mbps";
-    decode(el.more, `↑ ${fmt(r.upload)} · ${Math.round(r.latency)} ms${r.verified ? " · ✓" : ""}`);
+    renderMore();
+    renderFit();
     showStep("way");
     radar.set({ activity: "none" });
     if (state.me) {
-      const body = { ...r, lat: state.me.lat, lng: state.me.lng, accuracy: state.me.accuracy, verified: Boolean(r.verified) };
+      const body = { download: r.download, upload: r.upload, latency: r.latency, jitter: r.jitter, loaded: r.loaded, rpm: r.rpm && Number.isFinite(r.rpm) ? r.rpm : null, late: r.stream?.late ?? null, net: netKind(), lat: state.me.lat, lng: state.me.lng, accuracy: state.me.accuracy, verified: Boolean(r.verified) };
       const res = await fetch("/api/results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) addResult(await res.json());
     }

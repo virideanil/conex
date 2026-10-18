@@ -16,6 +16,13 @@ test("stream yields exactly the requested number of bytes", () => {
   }
 });
 
+test("bytesAt agrees with the stream at any offset", () => {
+  const whole = Buffer.concat([...payload.stream(payload.BLOCK_SIZE * 3)]);
+  for (const [off, n] of [[0, 10], [payload.BLOCK_SIZE - 5, 20], [100000, 83333]] as const) {
+    assert.ok(payload.bytesAt(off, n).equals(whole.subarray(off, off + n)));
+  }
+});
+
 test("upload verification recognises the canonical first block", () => {
   assert.equal(payload.verifyFirstBlock(Buffer.concat([payload.block(0), Buffer.alloc(10)])), true);
   assert.equal(payload.verifyFirstBlock(Buffer.alloc(payload.BLOCK_SIZE + 10, 7)), false);

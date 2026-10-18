@@ -28,7 +28,7 @@ body {
   padding: 0 var(--gutter); pointer-events: none; text-align: center;
 }
 .reading {
-  font: 500 clamp(5rem, 22vw, 10.5rem)/0.8 var(--font-serif);
+  font: 500 clamp(4rem, min(22vw, 17dvh), 10.5rem)/0.8 var(--font-serif);
   letter-spacing: -0.035em;
   font-variant-numeric: lining-nums tabular-nums;
   color: var(--ink);
@@ -51,6 +51,11 @@ body {
   color: var(--accent); font-variant-numeric: tabular-nums;
 }
 .way.is-dim { color: var(--ink-dim); font-weight: 400; }
+.fit {
+  min-height: 1.4em;
+  font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: lowercase;
+  color: var(--ink-dim); white-space: pre;
+}
 .more {
   min-height: 1.4em;
   font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.14em; text-transform: lowercase;
@@ -85,7 +90,7 @@ body {
 
 /* the steps: five signs at the foot; the one in action is the accent, the done ones ink, the rest dim */
 .steps {
-  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(11vh, 56px); z-index: var(--z-page);
+  margin-top: var(--space-2); margin-bottom: 1.2em;
   display: flex; justify-content: center; gap: var(--space-4);
   font: 500 1rem/1 var(--font-mono); color: var(--ink-dim); pointer-events: none; user-select: none;
 }
@@ -99,13 +104,13 @@ body {
 
 /* the hint: one line of small print at the foot */
 .hint {
-  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(6vh, 28px); z-index: var(--z-page);
+  position: fixed; left: 25%; right: 25%; bottom: clamp(16px, 4vh, 44px); z-index: var(--z-page);
   min-height: 1.4em; text-align: center;
   font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.14em; text-transform: lowercase;
   color: var(--ink-dim); white-space: pre-wrap; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; min-height: 44px;
 }
 .hint.is-dead { color: var(--dead); }
-@media (max-width: 420px) { .steps { bottom: max(14vh, 90px); } .hint { bottom: max(9vh, 56px); } }
 
 /* a short screen: the reading smaller so the way and the doors keep their place */
 @media (max-height: 560px) { .reading { font-size: clamp(3.5rem, 14vh, 7rem); } .home { gap: var(--space-2); } }

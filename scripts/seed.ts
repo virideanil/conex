@@ -17,6 +17,7 @@ for (let i = 0; i < n; i++) {
   const r = store.add({
     lat: lat + (Math.cos(b) * d) / kmPerDegLat, lng: lng + (Math.sin(b) * d) / kmPerDegLng,
     download, upload: download * rnd(0.1, 0.6), latency: good ? rnd(5, 25) : rnd(20, 120), jitter: rnd(1, 15),
+    loaded: good ? rnd(10, 40) : rnd(40, 300), rpm: good ? rnd(1500, 4000) : rnd(150, 1200), late: good ? 0 : rnd(0, 0.2), net: Math.random() < 0.5 ? "wifi" : "cellular",
     accuracy: rnd(5, 40), source: "seed",
   });
   if (r) { r.ts = Date.now() - rnd(0, 50 * 60 * 1000); added += 1; }

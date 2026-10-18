@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { bearingDeg, distanceKm } from "../shared/geo.ts";
-import type { LatLng, Result, Spot } from "../shared/types.ts";
+import type { LatLng, Net, Result, Spot } from "../shared/types.ts";
 
 const DATA_DIR = process.env.CONEX_DATA_DIR || path.join(import.meta.dirname, "..", "data");
 export const FILE = path.join(DATA_DIR, "results.json");
@@ -41,6 +41,9 @@ export function purge(now = Date.now()) {
 }
 setInterval(() => { const n = results.length; purge(); if (results.length !== n) save(); }, 5 * 60 * 1000).unref();
 
+const NETS: Net[] = ["wifi", "cellular", "ethernet", "unknown"];
+const net = (v: unknown): Net => (NETS.includes(v as Net) ? (v as Net) : "unknown");
+
 const num = (v: unknown, lo: number, hi: number): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null;
@@ -58,6 +61,10 @@ export function sanitize(input: Record<string, unknown>): Result | null {
     upload: num(input.upload, 0, 100000),
     latency: num(input.latency, 0, 100000),
     jitter: num(input.jitter, 0, 100000),
+    loaded: num(input.loaded, 0, 100000),
+    rpm: num(input.rpm, 0, 1000000),
+    late: num(input.late, 0, 1),
+    net: net(input.net),
     verified: Boolean(input.verified),
     source: input.source === "seed" ? "seed" : "live",
   };
@@ -91,15 +98,17 @@ export function better(center: LatLng, baseline: number, opts: BetterOpts = {}):
   const limit = opts.limit ?? 5, now = opts.now ?? Date.now();
 
   // measurements gather by ~11 m cells, so one busy spot counts once
-  type Cell = { lat: number; lng: number; wsum: number; down: number; up: number; ms: number; n: number; latest: number };
+  type Cell = { lat: number; lng: number; wsum: number; down: number; up: number; ms: number; loaded: number; lsum: number; net: Net; n: number; latest: number };
   const cells = new Map<string, Cell>();
   for (const r of results) {
     if (now - r.ts > windowMs) continue;
     const d = distanceKm(center, r);
     if (d > radiusKm || d < 0.02) continue; // not where you already stand
     const key = `${r.lat.toFixed(4)},${r.lng.toFixed(4)}`, w = freshness(r.ts, now, windowMs);
-    const c = cells.get(key) ?? { lat: 0, lng: 0, wsum: 0, down: 0, up: 0, ms: 0, n: 0, latest: 0 };
+    const c = cells.get(key) ?? { lat: 0, lng: 0, wsum: 0, down: 0, up: 0, ms: 0, loaded: 0, lsum: 0, net: "unknown" as Net, n: 0, latest: 0 };
     c.lat += r.lat * w; c.lng += r.lng * w; c.down += r.download * w; c.up += (r.upload ?? 0) * w; c.ms += (r.latency ?? 0) * w;
+    if (r.loaded !== null) { c.loaded += r.loaded * w; c.lsum += w; }
+    if (r.ts >= c.latest) c.net = r.net;
     c.wsum += w; c.n += 1; c.latest = Math.max(c.latest, r.ts);
     cells.set(key, c);
   }
@@ -111,7 +120,7 @@ export function better(center: LatLng, baseline: number, opts: BetterOpts = {}):
     if (baseline > 0 ? download < baseline * minGain : download <= 0) continue;
     const fresh = freshness(c.latest, now, windowMs), dist = distanceKm(center, p);
     out.push({
-      ...p, download, upload: c.up / c.wsum, latency: c.ms / c.wsum, samples: c.n, ageMs: now - c.latest,
+      ...p, download, upload: c.up / c.wsum, latency: c.ms / c.wsum, loaded: c.lsum > 0 ? c.loaded / c.lsum : null, net: c.net, samples: c.n, ageMs: now - c.latest,
       distanceKm: dist, bearing: bearingDeg(center, p), gain: baseline > 0 ? download / baseline : null,
       score: (download * (0.5 + 0.5 * fresh)) / (1 + dist),
     });
