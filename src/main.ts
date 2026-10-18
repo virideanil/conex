@@ -4,8 +4,8 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 import { runTest, type Tick, type TestResult } from "./test.ts";
 import { connect } from "./live.ts";
-import { createRadar } from "./radar.ts";
-import { settings, lang, L, W } from "./words.ts";
+import { createRadar, type Activity } from "./radar.ts";
+import { settings, lang, L, W, type Step } from "./words.ts";
 import { cut, decode } from "./motion.ts";
 import { arrow, distLabel } from "../shared/geo.ts";
 import type { BetterResponse, LatLng, Phase, Presence, Result, Spot } from "../shared/types.ts";
@@ -14,8 +14,10 @@ const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const el = {
   field: $<HTMLCanvasElement>(".field"), n: $(".reading__n"), reading: $(".reading"), unit: $(".unit"), way: $(".way"), more: $(".more"),
   measure: $<HTMLButtonElement>(".door--tl"), langBtn: $<HTMLButtonElement>('[data-do="lang"]'), themeBtn: $<HTMLButtonElement>('[data-do="theme"]'),
-  online: $(".online"), hint: $(".hint"), doors: $(".doors"),
+  online: $(".online"), hint: $(".hint"), doors: $(".doors"), steps: $(".steps"),
 };
+const stepEl = (k: Step) => el.steps.querySelector<HTMLElement>(`[data-step="${k}"]`)!;
+const STEPS: Step[] = ["locate", "latency", "download", "upload", "way"];
 
 const CLIENT_ID = (() => {
   try { const k = "conex:client"; let v = localStorage.getItem(k); if (!v) { v = Math.random().toString(36).slice(2, 12); localStorage.setItem(k, v); } return v; }
@@ -25,6 +27,9 @@ const CLIENT_ID = (() => {
 const state = {
   me: null as (LatLng & { accuracy: number | null }) | null,
   testing: false,
+  watch: 0 as number, // the geolocation watch, once asked
+  asked: false, // whether the visitor has been asked for their location
+  denied: false,
   ctl: null as AbortController | null,
   last: null as TestResult | null,
   results: new Map<string, Result>(),
@@ -47,8 +52,21 @@ function words() {
   el.themeBtn.setAttribute("aria-label", `${L({ tr: "tema", en: "theme" })}: ${W.theme[lang()][settings.get().theme]}`);
   el.doors.setAttribute("aria-label", L(W.doors));
   el.field.setAttribute("aria-label", L(W.radar));
+  for (const k of STEPS) stepEl(k).dataset.word = W.step[lang()][k];
   renderWay();
 }
+
+/** The step line: `on` is the accent, everything before it ink, the rest dim. */
+function showStep(on: Step | null, dead = false) {
+  const i = on ? STEPS.indexOf(on) : STEPS.length;
+  STEPS.forEach((k, j) => {
+    const e = stepEl(k);
+    e.classList.toggle("is-done", j < i);
+    e.classList.toggle("is-on", j === i && !dead);
+    e.classList.toggle("is-dead", j === i && dead);
+  });
+}
+const ACT: Record<Step, Activity> = { locate: "locate", latency: "latency", download: "download", upload: "upload", way: "none" };
 function theme() {
   document.documentElement.dataset.theme = settings.get().theme;
   $('meta[name="theme-color"]').setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--ground").trim());
@@ -62,21 +80,36 @@ el.themeBtn.addEventListener("click", () => settings.set({ theme: settings.get()
 const hint = (text: string, dead = false) => { el.hint.classList.toggle("is-dead", dead); decode(el.hint, text); };
 
 // ── where you are ────────────────────────────────────────────────────────
+// Asked once, on the first tap, as exactly as the phone can tell; watched
+// while the page is open; kept nowhere. The server rounds what it stores to
+// about 11 m and forgets it after an hour.
 function setMe(lat: number, lng: number, accuracy: number | null) {
   const first = !state.me;
   state.me = { lat, lng, accuracy };
+  state.denied = false;
   radar.set({ me: state.me });
-  if (first) { hint(state.last ? "" : L(W.ready)); refreshNearby(); refreshBetter(); }
+  if (first) { refreshNearby(); refreshBetter(); }
   sendPresence(state.testing ? "download" : "idle", 0);
 }
-if ("geolocation" in navigator) {
-  hint(L(W.locating));
-  navigator.geolocation.watchPosition(
-    (p) => setMe(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
-    () => { if (!state.me) hint(L(W.noLocation), true); },
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
-  );
-} else hint(L(W.noLocation), true);
+function askLocation(): Promise<boolean> {
+  if (state.me) return Promise.resolve(true);
+  if (!("geolocation" in navigator)) { state.denied = true; return Promise.resolve(false); }
+  state.asked = true;
+  showStep("locate");
+  radar.set({ activity: "locate" });
+  hint(L(W.notKept));
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok: boolean) => { if (!settled) { settled = true; radar.set({ activity: "none" }); resolve(ok); } };
+    state.watch = navigator.geolocation.watchPosition(
+      (p) => { setMe(p.coords.latitude, p.coords.longitude, p.coords.accuracy); done(true); },
+      () => { if (!state.me) { state.denied = true; done(false); } },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    );
+  });
+}
+// a visitor who has already said yes is not asked again
+navigator.permissions?.query({ name: "geolocation" }).then((p) => { if (p.state === "granted") askLocation(); }).catch(() => {});
 
 // ── the live channel ─────────────────────────────────────────────────────
 let lastPresence = 0;
@@ -148,11 +181,17 @@ function renderWay() {
     decode(el.way, !state.me ? "" : state.last ? L(W.best) : L(W.none));
     if (!state.last) el.more.textContent = "";
   }
+  if (!state.testing) {
+    showStep(state.last ? null : state.me ? "latency" : "locate");
+    if (state.me) hint(state.me.accuracy ? `◎ ±${Math.round(state.me.accuracy)} m` : "");
+  }
 }
 
 // ── the test ─────────────────────────────────────────────────────────────
+let shown: Phase = "idle";
 function tick(t: Tick) {
   if (t.phase === "done") return;
+  if (t.phase !== shown) { shown = t.phase; showStep(t.phase as Step); radar.set({ activity: ACT[t.phase as Step] }); }
   el.n.textContent = fmt(t.value);
   el.unit.innerHTML = `${SIGN[t.phase]} ${t.phase === "latency" ? "ms" : "mbps"}  <b>${bar(t.progress)}</b>`;
   sendPresence(t.phase, t.value);
@@ -164,9 +203,12 @@ async function toggle() {
   words();
   el.reading.classList.add("is-live");
   cut(el.reading);
-  el.way.textContent = ""; el.more.textContent = ""; hint("");
+  el.way.textContent = ""; el.more.textContent = "";
   state.spots = [];
   radar.set({ testing: true, spots: [] });
+  const located = await askLocation();
+  hint(located ? "" : L(W.noLocation), !located);
+  shown = "idle";
   try {
     const r = await runTest(tick, state.ctl.signal);
     state.last = r;
@@ -174,20 +216,22 @@ async function toggle() {
     cut(el.reading);
     el.unit.textContent = "mbps";
     decode(el.more, `↑ ${fmt(r.upload)} · ${Math.round(r.latency)} ms${r.verified ? " · ✓" : ""}`);
+    showStep("way");
+    radar.set({ activity: "none" });
     if (state.me) {
-      const body = { ...r, lat: state.me.lat, lng: state.me.lng, accuracy: state.me.accuracy, verified: Boolean(r.verified), client: CLIENT_ID };
+      const body = { ...r, lat: state.me.lat, lng: state.me.lng, accuracy: state.me.accuracy, verified: Boolean(r.verified) };
       const res = await fetch("/api/results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) addResult(await res.json());
     }
   } catch (err) {
     el.n.textContent = state.last ? fmt(state.last.download) : "—";
     el.unit.textContent = "mbps";
-    if (!(err instanceof DOMException && err.name === "AbortError")) hint(L(W.failed), true);
+    if (!(err instanceof DOMException && err.name === "AbortError")) { hint(L(W.failed), true); showStep(shown === "idle" ? "latency" : (shown as Step), true); }
   } finally {
     state.testing = false;
     state.ctl = null;
     el.reading.classList.remove("is-live");
-    radar.set({ testing: false });
+    radar.set({ testing: false, activity: "none" });
     words();
     sendPresence("idle", 0, true);
     await refreshBetter();
@@ -202,5 +246,6 @@ addEventListener("keydown", (e) => {
 // ── boot ─────────────────────────────────────────────────────────────────
 words();
 theme();
+showStep("locate");
 document.fonts.ready.then(() => radar.draw());
 if (import.meta.env.PROD && "serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});

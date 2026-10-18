@@ -17,7 +17,7 @@ for (let i = 0; i < n; i++) {
   const r = store.add({
     lat: lat + (Math.cos(b) * d) / kmPerDegLat, lng: lng + (Math.sin(b) * d) / kmPerDegLng,
     download, upload: download * rnd(0.1, 0.6), latency: good ? rnd(5, 25) : rnd(20, 120), jitter: rnd(1, 15),
-    accuracy: rnd(5, 40), source: "seed", client: "seed",
+    accuracy: rnd(5, 40), source: "seed",
   });
   if (r) { r.ts = Date.now() - rnd(0, 50 * 60 * 1000); added += 1; }
 }

@@ -14,7 +14,6 @@ export type Result = LatLng & {
   latency: number | null; // ms
   jitter: number | null;
   verified: boolean; // the uploaded bytes still said the message
-  client: string | null;
   source: "live" | "seed";
 };
 
@@ -33,7 +32,7 @@ export type Spot = LatLng & {
 
 export type BetterResponse = { baseline: number; radiusKm: number; windowMin: number; spots: Spot[] };
 
-export type Info = { message: string; digest: string; blockSize: number; serverTime: number };
+export type Info = { message: string; digest: string; blockSize: number; keptMin: number; serverTime: number };
 
 /** Someone mid-test, as the live channel carries them. */
 export type Presence = LatLng & { id: string; phase: Phase; value: number; ts: number };

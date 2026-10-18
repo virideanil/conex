@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "node --test \"test/*.test.ts\"",
-    "seed": "node scripts/seed.ts"
+    "seed": "node scripts/seed.ts",
+    "phone": "node scripts/phone.ts"
   },
   "engines": {
     "node": ">=22.18"
@@ -27,7 +28,9 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
+    "cloudflared": "^0.7.1",
     "concurrently": "^9.1.0",
+    "qrcode-terminal": "^0.12.0",
     "typescript": "^5.9.3",
     "vite": "^7.1.0"
   }

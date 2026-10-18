@@ -23,10 +23,21 @@ test("distance, bearing and the arrow are sane", () => {
 test("sanitize rejects junk and clamps values", () => {
   assert.equal(store.sanitize({ lat: "x", lng: 1, download: 1 }), null);
   assert.equal(store.sanitize({ lat: 1, lng: 1 }), null);
-  const r = store.sanitize({ lat: 1, lng: 1, download: -5, source: "evil", client: "a".repeat(100) })!;
+  const r = store.sanitize({ lat: 1.123456789, lng: 1, download: -5, source: "evil", client: "who" })!;
   assert.equal(r.download, 0);
   assert.equal(r.source, "live");
-  assert.equal(r.client!.length, 40);
+  assert.equal(r.lat, 1.1235); // about 11 m: enough for the radar, never a door
+  assert.equal("client" in r, false);
+});
+
+test("nothing is held past the hour", () => {
+  store.replaceAll([]);
+  const now = Date.now();
+  const old = store.add({ ...here, download: 1 })!;
+  old.ts = now - store.KEEP_MS - 1;
+  store.add({ ...here, download: 2 });
+  store.purge(now);
+  assert.deepEqual(store.all().map((r) => r.download), [2]);
 });
 
 test("better() ranks fresh, close, faster spots and ignores the stale and the slow", () => {

@@ -8,9 +8,12 @@ import { glyph, BINX } from "./binx.ts";
 import { PHI, localKm, distLabel } from "../shared/geo.ts";
 import type { LatLng, Presence, Result, Spot } from "../shared/types.ts";
 
+export type Activity = "none" | "locate" | "latency" | "download" | "upload";
+
 export type RadarState = {
-  me: LatLng | null;
+  me: (LatLng & { accuracy?: number | null }) | null;
   testing: boolean;
+  activity: Activity;
   results: Result[];
   spots: Spot[];
   others: Presence[];
@@ -22,7 +25,8 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
 
 export function createRadar(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d")!;
-  let st: RadarState = { me: null, testing: false, results: [], spots: [], others: [], radiusKm: 1, windowMs: 3600e3 };
+  let st: RadarState = { me: null, testing: false, activity: "none", results: [], spots: [], others: [], radiusKm: 1, windowMs: 3600e3 };
+  let step = 0; // the activity's clock: one jump every 420 ms
   let W = 0, H = 0, dpr = 1, cw = 6, ch = 10, cols = 0, rows = 0, cx = 0, cy = 0, pxPerKm = 1;
   let lum: Float32Array = new Float32Array(0), lumStale = true;
   let beat = false;
@@ -105,6 +109,35 @@ export function createRadar(canvas: HTMLCanvasElement) {
     }
     ctx.globalAlpha = 1;
 
+    // how exact the fix is: a ring of · at the accuracy radius, when it fits inside the outer ring
+    const acc = st.me.accuracy ?? 0;
+    if (acc > 0 && acc / 1000 < st.radiusKm) {
+      const r = Math.max(ch, (acc / 1000) * pxPerKm), n = Math.max(8, Math.round((2 * Math.PI * r) / ch));
+      for (let i = 0; i < n; i++) { const a = (i / n) * 2 * Math.PI; put("·", (cx + Math.cos(a) * r) / cw - 0.5, (cy + Math.sin(a) * r) / ch - 0.5, dim); }
+    }
+
+    // what is being done, as glyphs that jump
+    if (st.activity === "locate") {
+      // a sweep: one spoke of · turning a twelfth each step
+      const a = (step % 12) * (Math.PI / 6) - Math.PI / 2, n = Math.round(R / ch);
+      for (let i = 2; i <= n; i++) put("·", (cx + Math.cos(a) * i * ch) / cw - 0.5, (cy + Math.sin(a) * i * ch) / ch - 0.5, accent);
+    } else if (st.activity === "latency") {
+      // a ping: a ring leaving the centre, one of five radii each step
+      const r = ((step % 5) + 1) * (R / 5.5), n = Math.max(12, Math.round((2 * Math.PI * r) / ch));
+      for (let i = 0; i < n; i++) { const a = (i / n) * 2 * Math.PI; put("·", (cx + Math.cos(a) * r) / cw - 0.5, (cy + Math.sin(a) * r) / ch - 0.5, accent); }
+    } else if (st.activity === "download" || st.activity === "upload") {
+      // the bytes: 0 and 1 on sixteen spokes, falling in (download) or leaving (upload), one cell a step
+      const inward = st.activity === "download", n = Math.round(R / ch);
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * 2 * Math.PI;
+        for (let j = 0; j < 3; j++) {
+          const t = (step + k * 3 + j * 5) % n, i = inward ? n - t : t;
+          if (i < 2) continue;
+          put((i + k + j) % 2 ? "1" : "0", (cx + Math.cos(a) * i * ch) / cw - 0.5, (cy + Math.sin(a) * i * ch) / ch - 0.5, accent);
+        }
+      }
+    }
+
     // others, mid-test: ◎ that beats
     for (const o of st.others) {
       const c = toCell(o);
@@ -130,7 +163,11 @@ export function createRadar(canvas: HTMLCanvasElement) {
 
   // the beat: a step every 420 ms, never a fade
   const still = matchMedia("(prefers-reduced-motion: reduce)");
-  setInterval(() => { if (still.matches && !st.testing) return; beat = !beat; if (st.testing || st.others.length) draw(); }, 420);
+  setInterval(() => {
+    if (still.matches && st.activity === "none" && !st.testing) return;
+    beat = !beat; step += 1;
+    if (st.testing || st.others.length || st.activity !== "none") draw();
+  }, 420);
 
   addEventListener("resize", () => { resize(); draw(); });
   resize();

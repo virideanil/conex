@@ -29,7 +29,7 @@ app.use(express.json({ limit: "64kb" }));
 /** What this server sends and why. */
 app.get("/api/info", (_req, res) => {
   noStore(res);
-  res.json({ message: payload.MESSAGE, digest: payload.DIGEST_HEX, blockSize: payload.BLOCK_SIZE, serverTime: Date.now() });
+  res.json({ message: payload.MESSAGE, digest: payload.DIGEST_HEX, blockSize: payload.BLOCK_SIZE, keptMin: store.KEEP_MS / 60000, serverTime: Date.now() });
 });
 
 /** Latency probe: nothing, uncached. */

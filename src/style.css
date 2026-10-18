@@ -83,15 +83,29 @@ body {
 .online.is-beat { color: var(--accent); }
 @media (pointer: coarse) { .door { padding: 12px 10px; min-height: 44px; } .door__b { min-height: 44px; display: inline-flex; align-items: center; } }
 
+/* the steps: five signs at the foot; the one in action is the accent, the done ones ink, the rest dim */
+.steps {
+  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(11vh, 56px); z-index: var(--z-page);
+  display: flex; justify-content: center; gap: var(--space-4);
+  font: 500 1rem/1 var(--font-mono); color: var(--ink-dim); pointer-events: none; user-select: none;
+}
+.steps span { display: inline-grid; place-items: center; width: 1.4em; height: 1.4em; }
+.steps span.is-done { color: var(--ink); }
+.steps span.is-on { color: var(--accent); }
+.steps span.is-dead { color: var(--dead); }
+.steps span::after { content: attr(data-word); position: absolute; translate: 0 1.6em; font: 400 0.6rem/1 var(--font-mono); letter-spacing: 0.14em; white-space: nowrap; visibility: hidden; }
+.steps span.is-on::after { visibility: visible; }
+.steps span.is-dead::after { visibility: visible; }
+
 /* the hint: one line of small print at the foot */
 .hint {
-  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(7vh, 32px); z-index: var(--z-page);
+  position: fixed; left: var(--gutter); right: var(--gutter); bottom: max(6vh, 28px); z-index: var(--z-page);
   min-height: 1.4em; text-align: center;
   font: 400 0.75rem/1.4 var(--font-mono); letter-spacing: 0.14em; text-transform: lowercase;
   color: var(--ink-dim); white-space: pre-wrap; pointer-events: none;
 }
 .hint.is-dead { color: var(--dead); }
-@media (max-width: 420px) { .hint { bottom: max(11vh, 64px); } }
+@media (max-width: 420px) { .steps { bottom: max(14vh, 90px); } .hint { bottom: max(9vh, 56px); } }
 
 /* a short screen: the reading smaller so the way and the doors keep their place */
 @media (max-height: 560px) { .reading { font-size: clamp(3.5rem, 14vh, 7rem); } .home { gap: var(--space-2); } }

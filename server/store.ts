@@ -7,6 +7,10 @@ import type { LatLng, Result, Spot } from "../shared/types.ts";
 const DATA_DIR = process.env.CONEX_DATA_DIR || path.join(import.meta.dirname, "..", "data");
 export const FILE = path.join(DATA_DIR, "results.json");
 const MAX_RESULTS = 5000;
+/** How long a measurement is kept, on disk and in memory. After this it is gone: nothing is held. */
+export const KEEP_MS = 60 * 60 * 1000;
+/** Positions are kept to four decimals (about 11 m): enough to light the radar, not enough to find a door. */
+const coarse = (v: number) => Math.round(v * 1e4) / 1e4;
 
 let results: Result[] = [];
 
@@ -14,6 +18,7 @@ function load() {
   try {
     const got: unknown = JSON.parse(readFileSync(FILE, "utf8"));
     results = Array.isArray(got) ? (got as Result[]) : [];
+    purge();
   } catch {
     results = [];
   }
@@ -24,10 +29,17 @@ function save() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    purge();
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(FILE, JSON.stringify(results));
   }, 250);
 }
+
+/** Forgets everything older than KEEP_MS. */
+export function purge(now = Date.now()) {
+  results = results.filter((r) => now - r.ts <= KEEP_MS);
+}
+setInterval(() => { const n = results.length; purge(); if (results.length !== n) save(); }, 5 * 60 * 1000).unref();
 
 const num = (v: unknown, lo: number, hi: number): number | null => {
   const n = Number(v);
@@ -41,13 +53,12 @@ export function sanitize(input: Record<string, unknown>): Result | null {
   return {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     ts: Date.now(),
-    lat, lng, download,
+    lat: coarse(lat), lng: coarse(lng), download,
     accuracy: num(input.accuracy, 0, 100000),
     upload: num(input.upload, 0, 100000),
     latency: num(input.latency, 0, 100000),
     jitter: num(input.jitter, 0, 100000),
     verified: Boolean(input.verified),
-    client: typeof input.client === "string" ? input.client.slice(0, 40) : null,
     source: input.source === "seed" ? "seed" : "live",
   };
 }
